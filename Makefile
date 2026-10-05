@@ -1,4 +1,4 @@
-.PHONY: build up down restart logs sh clean
+.PHONY: build up down restart logs sh clean deploy test
 
 build:
 	docker compose build
@@ -19,3 +19,9 @@ sh:
 
 clean:
 	docker compose down -v --rmi local
+
+deploy:
+	docker compose run --rm discord-bot node src/deploy-commands.js
+
+test:
+	npm test
