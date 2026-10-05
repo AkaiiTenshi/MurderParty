@@ -15,7 +15,10 @@ const amount = (s) => player(s).addIntegerOption((o) => o.setName('nombre').setD
 export const data = new SlashCommandBuilder()
   .setName('rootgm')
   .setDescription('Commandes du GM')
-  .setContexts(InteractionContextType.Guild, InteractionContextType.BotDM)
+  // Hidden from everyone but administrators; the GM role is allowed in the server's
+  // Integrations settings. DMs ignore these permissions, so the command stays server-only.
+  .setContexts(InteractionContextType.Guild)
+  .setDefaultMemberPermissions(0)
   .addSubcommand((s) => s.setName('setup').setDescription('Créer les salons du jeu (sans effet sur ceux qui existent)'))
   .addSubcommand((s) => s.setName('start').setDescription('⚠️ Remet TOUT à zéro et démarre le jour 1 aujourd\'hui')
     .addBooleanOption((o) => o.setName('confirmer').setDescription('Confirmer la remise à zéro').setRequired(true)))

@@ -4,22 +4,26 @@ import {
 import {
   addChannel, ensurePlayer, getGame, getPlayer, logAction, spendTicket, updatePlayer, addCounter,
 } from '../db.js';
-import { announce, dm, fetchMember, gmLog, isSuspect, reply } from '../guards.js';
+import { announce, dm, fetchMember, getGuild, gmLog, isSuspect, reply } from '../guards.js';
 import {
   ACTIVE, COMATOSE, CURE_IMMUNITY_DAYS, availableCommands, canBeComa, canBeImpeded, checkUse,
   displayState, isComatose, protectionDay, resolveTarget,
 } from '../game/rules.js';
 import {
-  CURED_DM, ORDER_RECEIVED, QUERY_WARNING, REFUSALS, TARGET_UNAVAILABLE, comaAlert, cureAlert, protectedDM,
+  CURED_DM, ORDER_RECEIVED, QUERY_WARNING, REFUSALS, TARGET_UNAVAILABLE, comaAlert, cureAlert, protectedDM, PROTECTED_AGAIN_DM,
 } from '../messages.js';
 import { config } from '../config.js';
 import { openRequest } from '../interactions/requests.js';
 import { createPrivateChannel } from '../setup.js';
 
+// User options can't list server members in DMs, so players are picked through autocomplete.
+const playerOption = (name, description, required = false) => (o) => o
+  .setName(name).setDescription(description).setRequired(required).setAutocomplete(true);
+
 const targets = (sub, verb) => sub
-  .addUserOption((o) => o.setName('cible1').setDescription(`Cible principale à ${verb}`).setRequired(true))
-  .addUserOption((o) => o.setName('cible2').setDescription('Première cible de secours'))
-  .addUserOption((o) => o.setName('cible3').setDescription('Dernière cible de secours'));
+  .addStringOption(playerOption('cible1', `Cible principale à ${verb}`, true))
+  .addStringOption(playerOption('cible2', 'Première cible de secours'))
+  .addStringOption(playerOption('cible3', 'Dernière cible de secours'));
 
 export const data = new SlashCommandBuilder()
   .setName('root')
@@ -30,9 +34,9 @@ export const data = new SlashCommandBuilder()
     .addStringOption((o) => o.setName('question').setDescription('Votre question').setRequired(true).setMaxLength(1000)))
   .addSubcommand((s) => s.setName('verify').setDescription('Faire vérifier un indice par le GM (1 ticket)'))
   .addSubcommand((s) => s.setName('protect').setDescription('Protéger secrètement un joueur (1 ticket)')
-    .addUserOption((o) => o.setName('joueur').setDescription('Joueur à protéger').setRequired(true)))
+    .addStringOption(playerOption('joueur', 'Joueur à protéger', true)))
   .addSubcommand((s) => s.setName('cure').setDescription('Sortir un joueur du coma (1 ticket)')
-    .addUserOption((o) => o.setName('joueur').setDescription('Joueur à soigner').setRequired(true)))
+    .addStringOption(playerOption('joueur', 'Joueur à soigner', true)))
   .addSubcommand((s) => targets(s.setName('impede').setDescription('Empêcher un joueur de gagner aujourd\'hui (1 ticket)'), 'bloquer'))
   .addSubcommand((s) => targets(s.setName('coma').setDescription('Plonger un joueur dans le coma (1 ticket)'), 'plonger dans le coma'))
   .addSubcommand((s) => s.setName('corrupt').setDescription('Demande de corruption au GM (1 ticket)'))
@@ -40,7 +44,7 @@ export const data = new SlashCommandBuilder()
     .addSubcommand((s) => {
       s.setName('create').setDescription('Créer un canal privé avec d\'autres joueurs');
       for (let i = 1; i <= 9; i++) {
-        s.addUserOption((o) => o.setName(`joueur${i}`).setDescription(`Joueur ${i}`).setRequired(i === 1));
+        s.addStringOption(playerOption(`joueur${i}`, `Joueur ${i}`, i === 1));
       }
       return s.addStringOption((o) => o.setName('nom').setDescription('Nom du canal').setMaxLength(90));
     }));
@@ -59,9 +63,9 @@ async function prepare(interaction, command) {
   return { player, game };
 }
 
-// Validates user options as suspects. Returns ids or null after replying.
-async function suspectIds(interaction, users) {
-  const ids = users.filter(Boolean).map((u) => u.id);
+// Validates player options (user ids from autocomplete) as suspects. Returns ids or null after replying.
+async function suspectIds(interaction, names) {
+  const ids = names.map((n) => interaction.options.getString(n)).filter(Boolean);
   if (new Set(ids).size !== ids.length) return void reply(interaction, REFUSALS.duplicateTargets);
   for (const id of ids) {
     if (!isSuspect(await fetchMember(interaction.client, id))) return void reply(interaction, REFUSALS.invalidTarget);
@@ -79,7 +83,7 @@ const handlers = {
     const { player, game } = ctx;
     const lines = [
       '```',
-      `TICKETS : ${player.tickets}${player.pending_tickets ? ` (+${player.pending_tickets} actif à 00:00)` : ''}`,
+      `ROOT TICKETS : ${player.tickets}${player.pending_tickets ? ` (+${player.pending_tickets} actif à 00:00)` : ''}`,
       `ÉTAT    : ${displayState(player, game.day)}`,
       `JOUR    : ${game.day}${game.locked ? ' — VERROUILLÉ jusqu\'à 00:00' : ''}`,
       '```',
@@ -116,21 +120,23 @@ const handlers = {
   async protect(interaction) {
     const ctx = await prepare(interaction, 'protect');
     if (!ctx) return;
-    const ids = await suspectIds(interaction, [interaction.options.getUser('joueur')]);
+    const ids = await suspectIds(interaction, ['joueur']);
     if (!ids) return;
     if (!spendTicket(interaction.user.id)) return reply(interaction, REFUSALS.noTicket);
     const { day, locked } = ctx.game;
-    updatePlayer(ids[0], { protected_day: protectionDay(day, locked) });
+    const protectedDay = protectionDay(day, locked);
+    const alreadyProtected = getPlayer(ids[0]).protected_day === protectedDay;
+    updatePlayer(ids[0], { protected_day: protectedDay });
     logAction({ day, authorId: interaction.user.id, type: 'protect', targets: ids, result: locked ? 'next-day' : 'ok' });
     await reply(interaction, ORDER_RECEIVED);
-    await dm(interaction.client, ids[0], protectedDM(locked));
+    await dm(interaction.client, ids[0], alreadyProtected ? PROTECTED_AGAIN_DM : protectedDM(locked));
     await gmLog(interaction.client, `🛡️ <@${interaction.user.id}> protège <@${ids[0]}>${locked ? ' (pour demain)' : ''}.`);
   },
 
   async cure(interaction) {
     const ctx = await prepare(interaction, 'cure');
     if (!ctx) return;
-    const ids = await suspectIds(interaction, [interaction.options.getUser('joueur')]);
+    const ids = await suspectIds(interaction, ['joueur']);
     if (!ids) return;
     const [targetId] = ids;
     if (isComatose(ctx.player) && targetId !== interaction.user.id) return reply(interaction, REFUSALS.cureSelfOnly);
@@ -161,21 +167,20 @@ const handlers = {
 
   async 'canal create'(interaction) {
     if (!(await prepare(interaction))) return;
-    const users = Array.from({ length: 9 }, (_, i) => interaction.options.getUser(`joueur${i + 1}`))
-      .filter((u) => u && u.id !== interaction.user.id);
-    const ids = await suspectIds(interaction, users);
+    const ids = await suspectIds(interaction, Array.from({ length: 9 }, (_, i) => `joueur${i + 1}`));
     if (!ids) return;
+    const others = ids.filter((id) => id !== interaction.user.id);
     await interaction.deferReply();
     const channel = await createPrivateChannel(interaction.client, {
       categoryKey: 'private_category',
       name: interaction.options.getString('nom') ?? `canal-${interaction.user.username}`,
-      memberIds: [interaction.user.id, ...ids],
+      memberIds: [interaction.user.id, ...others],
       topic: 'Canal privé — le créateur gère les membres avec /channel add, /channel kick, /channel delete',
     });
     addChannel(channel.id, 'group', interaction.user.id);
     await channel.send({
-      content: `Canal créé par <@${interaction.user.id}> avec ${ids.map((id) => `<@${id}>`).join(', ') || 'personne d\'autre'}.`,
-      allowedMentions: { users: [interaction.user.id, ...ids] },
+      content: `Canal créé par <@${interaction.user.id}> avec ${others.map((id) => `<@${id}>`).join(', ') || 'personne d\'autre'}.`,
+      allowedMentions: { users: [interaction.user.id, ...others] },
     });
     await gmLog(interaction.client, `💬 Canal privé ${channel} créé par <@${interaction.user.id}>.`);
     return reply(interaction, `Canal créé : ${channel}`);
@@ -187,7 +192,7 @@ const handlers = {
 async function hostile(interaction, command) {
   const ctx = await prepare(interaction, command);
   if (!ctx) return;
-  const ids = await suspectIds(interaction, ['cible1', 'cible2', 'cible3'].map((n) => interaction.options.getUser(n)));
+  const ids = await suspectIds(interaction, ['cible1', 'cible2', 'cible3']);
   if (!ids) return;
   if (!spendTicket(interaction.user.id)) return reply(interaction, REFUSALS.noTicket);
 
@@ -203,6 +208,19 @@ async function hostile(interaction, command) {
   await gmLog(interaction.client, `${command === 'coma' ? '🗡️ COMA' : '⛔ IMPEDE'} par <@${interaction.user.id}> `
     + `[${list}] : ${hit ? `touche <@${hit.id}>` : 'échec (toutes les cibles indisponibles)'}`);
   if (hit && command === 'coma') await announce(interaction.client, comaAlert(hit.id), [hit.id]);
+}
+
+// Suggests suspects by server display name; the submitted value is the user id.
+export async function autocomplete(interaction) {
+  const typed = interaction.options.getFocused().toLowerCase();
+  const guild = await getGuild(interaction.client);
+  const choices = guild.members.cache
+    .filter(isSuspect)
+    .filter((m) => m.displayName.toLowerCase().includes(typed) || m.user.username.toLowerCase().includes(typed))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName))
+    .first(25)
+    .map((m) => ({ name: m.displayName.slice(0, 100), value: m.id }));
+  return interaction.respond(choices);
 }
 
 export async function execute(interaction) {

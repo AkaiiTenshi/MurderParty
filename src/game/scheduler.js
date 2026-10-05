@@ -4,6 +4,7 @@ import { announce, dm, gmLog } from '../guards.js';
 import { dailyReport, winnerDM, wakeAlert, CURED_DM } from '../messages.js';
 import { expectedDay, isAfterEndOfDay, TIMEZONE } from './clock.js';
 import { selectWinners } from './winners.js';
+import { backupNow } from '../backup.js';
 import { shouldWake, CURE_IMMUNITY_DAYS, ACTIVE } from './rules.js';
 
 // 23:42 — rank the day, pick winners, give pending tickets, lock ticket commands.
@@ -89,5 +90,9 @@ export async function catchUp(client) {
 
 export function startScheduler(client) {
   cron.schedule('* * * * *', () => catchUp(client), { timezone: TIMEZONE });
+  // Hourly snapshot, plus right after the 23:42 and midnight jobs.
+  for (const when of ['5 * * * *', '43 23 * * *', '1 0 * * *']) {
+    cron.schedule(when, () => backupNow().catch(console.error), { timezone: TIMEZONE });
+  }
   return catchUp(client);
 }

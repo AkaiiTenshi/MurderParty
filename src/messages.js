@@ -22,6 +22,8 @@ export const comaAlert = (userId) => `SYSTEM ALERT — <@${userId}> is now COMAT
 export const cureAlert = (userId) => `SYSTEM ALERT — <@${userId}> is no longer COMATOSE.`;
 export const wakeAlert = (userId) => `SYSTEM ALERT — <@${userId}> has woken up from COMA.`;
 
+export const PROTECTED_AGAIN_DM = '🛡️ Vous avez reçu une autre protection, vos alliés sont nombreux !';
+
 export const protectedDM = (nextDay) => nextDay
   ? '🛡️ Vous serez **protégé** demain, de 00:00 à 23:42.'
   : '🛡️ Vous êtes **protégé** jusqu\'à la fin de la journée.';
@@ -45,11 +47,11 @@ export const dailyReport = () => [
   'PROCESSING RESULTS...',
   'RANKING LOCKED',
   'TICKET OWNER IDENTIFIED',
-  'SUBJECT: [UNKNOWN]',
-  'REWARD: 1 ROOT TICKET',
-  'STATUS: PENDING ACTIVATION',
-  'ACTIVATION WINDOW: 00:00',
-  'AUTHORIZED USE: AFTER MIDNIGHT',
+  'SUBJECT:				[UNKNOWN]',
+  'REWARD:				1 ROOT TICKET',
+  'STATUS:				PENDING ACTIVATION',
+  'ACTIVATION WINDOW:	00:00',
+  'AUTHORIZED USE:		AFTER MIDNIGHT',
   '```',
 ].join('\n');
 
