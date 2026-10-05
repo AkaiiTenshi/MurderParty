@@ -1,0 +1,19 @@
+services:
+  discord-bot:
+    build: .
+    image: murder-party:v1
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+
+  # To test prod container
+  # discord-bot:
+  #   image: ghcr.io/42parispedago/blindbot:1.0.0
+  #   restart: unless-stopped
+  #   env_file:
+  #     - .env
+  #   volumes:
+  #     - ./data:/app/data  
+
