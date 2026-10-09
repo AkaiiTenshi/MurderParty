@@ -47,6 +47,11 @@ db.exec(`
     kind TEXT NOT NULL,
     owner_id TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS player_info (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id TEXT NOT NULL,
+    text TEXT NOT NULL
+  );
 `);
 
 // --- settings -------------------------------------------------------------
@@ -139,10 +144,28 @@ export function removeChannel(id) {
   db.prepare('DELETE FROM channels WHERE id = ?').run(id);
 }
 
+// --- GM info lines shown in /root status -------------------------------------
+
+export function addInfo(playerId, text) {
+  db.prepare('INSERT INTO player_info (player_id, text) VALUES (?, ?)').run(playerId, text);
+}
+
+export function playerInfo(playerId) {
+  return db.prepare('SELECT id, text FROM player_info WHERE player_id = ? ORDER BY id').all(playerId);
+}
+
+export function allInfo() {
+  return db.prepare('SELECT id, player_id, text FROM player_info ORDER BY player_id, id').all();
+}
+
+export function clearInfo(playerId) {
+  return db.prepare('DELETE FROM player_info WHERE player_id = ?').run(playerId).changes;
+}
+
 // --- game reset -----------------------------------------------------------
 
 export const startGame = db.transaction((startDate, playerIds) => {
-  db.exec('DELETE FROM players; DELETE FROM daily_scores; DELETE FROM actions;');
+  db.exec('DELETE FROM players; DELETE FROM daily_scores; DELETE FROM actions; DELETE FROM player_info;');
   const insert = db.prepare('INSERT INTO players (id) VALUES (?)');
   for (const id of playerIds) insert.run(id);
   setSetting('start_date', startDate);

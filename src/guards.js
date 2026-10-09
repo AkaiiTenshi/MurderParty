@@ -46,7 +46,26 @@ export async function announce(client, content, ping = []) {
     console.log('[root]', content);
     return;
   }
-  await channel.send({ content, allowedMentions: { users: ping } });
+  const message = await channel.send({
+    content: `@everyone ${content}`, allowedMentions: { parse: ['everyone'], users: ping },
+  });
+  await message.edit({ content, allowedMentions: { parse: [] } }).catch(console.error);
+}
+
+// Public embed in #root that pings @everyone invisibly: the mention is sent in the content,
+// then removed by an edit. The notification is already out, so only the embed stays visible.
+// Needs the "Mention Everyone" permission in the channel.
+export async function announceEmbed(client, embed) {
+  const channel = await settingChannel(client, 'root_channel');
+  if (!channel) {
+    console.log('[root]', embed.data.title ?? '', embed.data.description);
+    return false;
+  }
+  const message = await channel.send({
+    content: '@everyone', embeds: [embed], allowedMentions: { parse: ['everyone'] },
+  });
+  await message.edit({ content: '', allowedMentions: { parse: [] } }).catch(console.error);
+  return true;
 }
 
 export async function dm(client, userId, content) {

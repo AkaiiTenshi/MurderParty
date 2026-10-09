@@ -1,8 +1,11 @@
-import { InteractionContextType, MessageFlags, SlashCommandBuilder } from 'discord.js';
 import {
-  addCounter, allPlayers, dailyScores, ensurePlayer, getGame, getPlayer, logAction, startGame, updatePlayer,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, InteractionContextType, MessageFlags,
+  ModalBuilder, SlashCommandBuilder, TextInputBuilder, TextInputStyle,
+} from 'discord.js';
+import {
+  addCounter, addInfo, allInfo, allPlayers, clearInfo, dailyScores, ensurePlayer, getGame, getPlayer, logAction, startGame, updatePlayer,
 } from '../db.js';
-import { fetchMember, getGuild, gmLog, isGM, isSuspect } from '../guards.js';
+import { announceEmbed, fetchMember, getGuild, gmLog, isGM, isSuspect } from '../guards.js';
 import { parisNow } from '../game/clock.js';
 import { ACTIVE, COMATOSE, displayState } from '../game/rules.js';
 import { endDay, midnight } from '../game/scheduler.js';
@@ -37,6 +40,13 @@ export const data = new SlashCommandBuilder()
       .addChoices({ name: 'active', value: ACTIVE }, { name: 'comatose', value: COMATOSE })))
   .addSubcommand((s) => s.setName('rank').setDescription('Classement du jour (points, tickets, états)'))
   .addSubcommand((s) => s.setName('grank').setDescription('Historique : points et gagnants de chaque jour'))
+  .addSubcommandGroup((g) => g.setName('info').setDescription('Lignes INFO affichées dans /root status')
+    .addSubcommand((s) => s.setName('add').setDescription('Ajouter une ligne INFO au statut de 1 à 3 joueurs')
+      .addStringOption((o) => o.setName('texte').setDescription('Texte de l\'info').setRequired(true).setMaxLength(200))
+      .addUserOption((o) => o.setName('joueur').setDescription('Joueur').setRequired(true)))
+    .addSubcommand((s) => player(s.setName('clear').setDescription('Supprimer toutes les lignes INFO d\'un joueur')))
+    .addSubcommand((s) => s.setName('list').setDescription('Lister les lignes INFO')))
+  .addSubcommand((s) => s.setName('msg').setDescription('Faire une annonce au nom de ROOT'))
   .addSubcommand((s) => s.setName('endday').setDescription('Forcer le traitement de 23:42 (tests / urgence)'))
   .addSubcommand((s) => s.setName('reset').setDescription('Forcer le passage à minuit (tests / urgence)'));
 
@@ -98,7 +108,85 @@ function grankText() {
   return lines.join('\n');
 }
 
+// Announcement drafts (GM user id -> { title, body }), kept in memory like pendingQueries in root.js.
+const drafts = new Map();
+const MSG_COLOR = 0xc0392b;
+const DRAFT_EXPIRED = 'Brouillon expiré, relancez /rootgm msg.';
+
+function msgModal(draft = {}) {
+  const input = (id, label, style, max, required, value) => {
+    const t = new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(style)
+      .setMaxLength(max).setRequired(required);
+    if (value) t.setValue(value);
+    return new ActionRowBuilder().addComponents(t);
+  };
+  return new ModalBuilder().setCustomId('gmmsg:modal').setTitle('Annonce de ROOT').addComponents(
+    input('title', 'Titre (optionnel)', TextInputStyle.Short, 256, false, draft.title),
+    input('body', 'Message', TextInputStyle.Paragraph, 4000, true, draft.body),
+  );
+}
+
+function msgEmbed({ title, body }) {
+  const embed = new EmbedBuilder().setColor(MSG_COLOR).setDescription(body);
+  if (title) embed.setTitle(title);
+  return embed;
+}
+
+function msgButtons() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('gmmsg:send').setLabel('Envoyer').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('gmmsg:edit').setLabel('Modifier').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('gmmsg:cancel').setLabel('Annuler').setStyle(ButtonStyle.Secondary),
+  );
+}
+
+// Modal submit and buttons of /rootgm msg (customIds prefixed `gmmsg:`).
+export async function handleMsgInteraction(interaction) {
+  const flags = MessageFlags.Ephemeral;
+  if (!isGM(await fetchMember(interaction.client, interaction.user.id))) {
+    return interaction.reply({ content: REFUSALS.notGM, flags });
+  }
+  const id = interaction.user.id;
+
+  if (interaction.isModalSubmit()) {
+    const draft = {
+      title: interaction.fields.getTextInputValue('title').trim(),
+      body: interaction.fields.getTextInputValue('body').trim(),
+    };
+    if (!draft.body) return interaction.reply({ content: 'Le message est vide.', flags });
+    drafts.set(id, draft);
+    const payload = {
+      content: 'Aperçu de l\'annonce :', embeds: [msgEmbed(draft)], components: [msgButtons()],
+    };
+    // Submitted from the Edit button: refresh the existing preview instead of adding another.
+    return interaction.isFromMessage() ? interaction.update(payload) : interaction.reply({ ...payload, flags });
+  }
+
+  const draft = drafts.get(id);
+  if (!draft) return interaction.update({ content: DRAFT_EXPIRED, embeds: [], components: [] });
+  const action = interaction.customId.slice('gmmsg:'.length);
+
+  if (action === 'edit') return interaction.showModal(msgModal(draft));
+  if (action === 'cancel') {
+    drafts.delete(id);
+    return interaction.update({ content: 'Annonce annulée.', embeds: [], components: [] });
+  }
+  if (action === 'send') {
+    await interaction.deferUpdate();
+    const posted = await announceEmbed(interaction.client, msgEmbed(draft));
+    drafts.delete(id);
+    if (posted) await gmLog(interaction.client, `📢 Annonce envoyée par <@${id}> : ${draft.title || draft.body.slice(0, 100)}`);
+    return interaction.editReply({
+      content: posted ? 'Annonce envoyée.' : 'Salon root introuvable (lancez /rootgm setup) : annonce non envoyée.',
+      embeds: [], components: [],
+    });
+  }
+}
+
 const handlers = {
+  // Must be the first response to the interaction: no defer/reply before showModal.
+  msg: (interaction) => interaction.showModal(msgModal()),
+
   async setup(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     return send(interaction, await runSetup(interaction.client));
@@ -113,6 +201,28 @@ const handlers = {
     startGame(parisNow().date, ids);
     await gmLog(interaction.client, `🚀 Partie démarrée — jour 1, ${ids.length} suspects.`);
     return send(interaction, `Partie démarrée : jour 1, ${ids.length} suspects enregistrés.`);
+  },
+
+  async 'info add'(interaction) {
+    const users = ['joueur', 'joueur2', 'joueur3'].map((n) => interaction.options.getUser(n)).filter(Boolean);
+    const ids = [...new Set(users.map((u) => u.id))];
+    for (const id of ids) {
+      if (!isSuspect(await fetchMember(interaction.client, id))) return send(interaction, REFUSALS.invalidTarget);
+    }
+    const text = interaction.options.getString('texte');
+    for (const id of ids) addInfo(ensurePlayer(id).id, text);
+    return send(interaction, `INFO ajoutée à ${ids.map((id) => `<@${id}>`).join(', ')} : « ${text} »`);
+  },
+
+  async 'info clear'(interaction) {
+    const p = await targetPlayer(interaction);
+    if (!p) return send(interaction, REFUSALS.invalidTarget);
+    return send(interaction, `${clearInfo(p.id)} ligne(s) INFO supprimée(s) pour <@${p.id}>.`);
+  },
+
+  async 'info list'(interaction) {
+    const rows = allInfo();
+    return send(interaction, rows.length ? rows.map((r) => `<@${r.player_id}> — ${r.text}`).join('\n') : 'Aucune ligne INFO.');
   },
 
   async 'killer add'(interaction) {

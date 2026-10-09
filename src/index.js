@@ -2,6 +2,7 @@ import { Client, Events, GatewayIntentBits, MessageFlags, Partials } from 'disco
 import { config } from './config.js';
 import { commands } from './commands/index.js';
 import { handleQueryButton } from './commands/root.js';
+import { handleMsgInteraction } from './commands/rootgm.js';
 import { handleRequestButton } from './interactions/requests.js';
 import { startScheduler } from './game/scheduler.js';
 import { onMessage } from './safety-net.js';
@@ -36,6 +37,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } else if (interaction.isButton()) {
       if (interaction.customId.startsWith('query:')) await handleQueryButton(interaction);
       else if (interaction.customId.startsWith('req:')) await handleRequestButton(interaction);
+      else if (interaction.customId.startsWith('gmmsg:')) await handleMsgInteraction(interaction);
+    } else if (interaction.isModalSubmit() && interaction.customId.startsWith('gmmsg:')) {
+      await handleMsgInteraction(interaction);
     }
   } catch (err) {
     console.error(err);

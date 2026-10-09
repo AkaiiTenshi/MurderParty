@@ -61,9 +61,9 @@ export function checkUse(command, p, { locked }) {
 
 // Commands this player personally has access to (ignores ticket count and lock).
 export function availableCommands(p) {
-  if (isComatose(p)) return ['status', 'cure (sur vous-même uniquement)', 'canal create'];
-  const list = ['status', 'query', 'verify', 'protect', 'cure', 'impede'];
+  if (isComatose(p)) return ['status', 'cure (sur vous-même uniquement)', 'channel create'];
+  const list = ['man', 'status', 'query', 'verify', 'protect', 'cure', 'impede'];
   if (p.is_killer) list.push('coma', 'corrupt');
-  list.push('canal create');
+  list.push('channel create');
   return list;
 }

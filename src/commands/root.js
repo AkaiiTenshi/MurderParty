@@ -2,7 +2,7 @@ import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, InteractionContextType, SlashCommandBuilder,
 } from 'discord.js';
 import {
-  addChannel, ensurePlayer, getGame, getPlayer, logAction, spendTicket, updatePlayer, addCounter,
+  addChannel, ensurePlayer, getGame, getPlayer, logAction, playerInfo, spendTicket, updatePlayer, addCounter,
 } from '../db.js';
 import { announce, dm, fetchMember, getGuild, gmLog, isSuspect, reply } from '../guards.js';
 import {
@@ -10,7 +10,7 @@ import {
   displayState, isComatose, protectionDay, resolveTarget,
 } from '../game/rules.js';
 import {
-  CURED_DM, ORDER_RECEIVED, QUERY_WARNING, REFUSALS, TARGET_UNAVAILABLE, comaAlert, cureAlert, protectedDM, PROTECTED_AGAIN_DM,
+  CURED_DM, MAN_PAGES, ORDER_RECEIVED, QUERY_WARNING, REFUSALS, TARGET_UNAVAILABLE, manOverview, comaAlert, cureAlert, protectedDM, PROTECTED_AGAIN_DM,
 } from '../messages.js';
 import { config } from '../config.js';
 import { openRequest } from '../interactions/requests.js';
@@ -29,6 +29,9 @@ export const data = new SlashCommandBuilder()
   .setName('root')
   .setDescription('ROOT // FORTY2 PROTOCOL')
   .setContexts(InteractionContextType.BotDM)
+  .addSubcommand((s) => s.setName('man').setDescription('Manuel : liste des commandes ou détail d\'une commande')
+    .addStringOption((o) => o.setName('commande').setDescription('Commande à détailler')
+      .addChoices(...Object.keys(MAN_PAGES).map((k) => ({ name: k, value: k })))))
   .addSubcommand((s) => s.setName('status').setDescription('Vos tickets, votre état et vos commandes'))
   .addSubcommand((s) => s.setName('query').setDescription('Poser une question fermée au GM (1 ticket)')
     .addStringOption((o) => o.setName('question').setDescription('Votre question').setRequired(true).setMaxLength(1000)))
@@ -40,7 +43,7 @@ export const data = new SlashCommandBuilder()
   .addSubcommand((s) => targets(s.setName('impede').setDescription('Empêcher un joueur de gagner aujourd\'hui (1 ticket)'), 'bloquer'))
   .addSubcommand((s) => targets(s.setName('coma').setDescription('Plonger un joueur dans le coma (1 ticket)'), 'plonger dans le coma'))
   .addSubcommand((s) => s.setName('corrupt').setDescription('Demande de corruption au GM (1 ticket)'))
-  .addSubcommandGroup((g) => g.setName('canal').setDescription('Canaux privés entre joueurs')
+  .addSubcommandGroup((g) => g.setName('channel').setDescription('Canaux privés entre joueurs')
     .addSubcommand((s) => {
       s.setName('create').setDescription('Créer un canal privé avec d\'autres joueurs');
       for (let i = 1; i <= 9; i++) {
@@ -77,6 +80,13 @@ async function suspectIds(interaction, names) {
 const pendingQueries = new Map();
 
 const handlers = {
+  async man(interaction) {
+    const member = await fetchMember(interaction.client, interaction.user.id);
+    if (!isSuspect(member)) return reply(interaction, REFUSALS.notPlayer);
+    const page = MAN_PAGES[interaction.options.getString('commande')];
+    return reply(interaction, page ? page.text.join('\n') : manOverview());
+  },
+
   async status(interaction) {
     const ctx = await prepare(interaction);
     if (!ctx) return;
@@ -86,6 +96,7 @@ const handlers = {
       `ROOT TICKETS : ${player.tickets}${player.pending_tickets ? ` (+${player.pending_tickets} actif à 00:00)` : ''}`,
       `ÉTAT    : ${displayState(player, game.day)}`,
       `JOUR    : ${game.day}${game.locked ? ' — VERROUILLÉ jusqu\'à 00:00' : ''}`,
+      ...playerInfo(player.id).map((i) => `INFO    : ${i.text}`),
       '```',
       `**Commandes disponibles :** ${availableCommands(player).map((c) => `\`${c}\``).join(', ')}`,
     ];
@@ -165,7 +176,7 @@ const handlers = {
     });
   },
 
-  async 'canal create'(interaction) {
+  async 'channel create'(interaction) {
     if (!(await prepare(interaction))) return;
     const ids = await suspectIds(interaction, Array.from({ length: 9 }, (_, i) => `joueur${i + 1}`));
     if (!ids) return;
